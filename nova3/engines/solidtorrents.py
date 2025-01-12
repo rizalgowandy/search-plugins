@@ -1,4 +1,4 @@
-# VERSION: 2.1
+# VERSION: 2.4
 # AUTHORS: nKlido
 
 # LICENSING INFORMATION
@@ -23,11 +23,11 @@
 from helpers import retrieve_url
 from novaprinter import prettyPrinter
 from html.parser import HTMLParser
-import math
+from datetime import datetime
 
 
 class solidtorrents(object):
-    url = 'https://solidtorrents.net'
+    url = 'https://solidtorrents.to'
     name = 'Solid Torrents'
     supported_categories = {'all': 'all', 'music': 'Audio', 'books': 'eBook'}
 
@@ -43,10 +43,9 @@ class solidtorrents(object):
             self.parseSeeders = False
             self.parseLeechers = False
             self.parseSize = False
+            self.parseDate = False
             self.column = 0
             self.torrentReady = False
-            self.foundSearchStats = False
-            self.parseTotalResults = False
             self.totalResults = 0
 
             self.torrent_info = self.empty_torrent_info()
@@ -59,18 +58,12 @@ class solidtorrents(object):
                 'seeds': '-1',
                 'leech': '-1',
                 'engine_url': self.url,
-                'desc_link': ''
+                'desc_link': '',
+                'pub_date': -1,
             }
 
         def handle_starttag(self, tag, attrs):
             params = dict(attrs)
-
-            if 'search-stats' in params.get('class', ''):
-                self.foundSearchStats = True
-
-            if (self.foundSearchStats and tag == 'b'):
-                self.parseTotalResults = True
-                self.foundSearchStats = False
 
             if 'search-result' in params.get('class', ''):
                 self.foundResult = True
@@ -99,6 +92,9 @@ class solidtorrents(object):
             if (self.foundStats and tag == 'font' and self.column == 4):
                 self.parseLeechers = True
 
+            if (self.foundStats and tag == 'div' and self.column == 5):
+                self.parseDate = True
+
             if (self.foundResult and 'dl-magnet' in params.get('class', '') and tag == 'a'):
                 self.torrent_info['link'] = params.get('href')
                 self.foundResult = False
@@ -109,12 +105,9 @@ class solidtorrents(object):
                 prettyPrinter(self.torrent_info)
                 self.torrentReady = False
                 self.torrent_info = self.empty_torrent_info()
+                self.totalResults += 1
 
         def handle_data(self, data):
-
-            if (self.parseTotalResults):
-                self.totalResults = int(data.strip())
-                self.parseTotalResults = False
 
             if (self.parseTitle):
                 if (bool(data.strip()) and data != '\n'):
@@ -133,6 +126,18 @@ class solidtorrents(object):
             if (self.parseLeechers):
                 self.torrent_info['leech'] = data
                 self.parseLeechers = False
+
+            if (self.parseDate):
+                try:
+                    # I chose not to use strptime here because it depends on user's locale
+                    months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                              'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+                    [month, day, year] = data.replace(',', '').lower().split()
+                    date = datetime(int(year), int(months.index(month) + 1), int(day))
+                    self.torrent_info['pub_date'] = int(date.timestamp())
+                except Exception:
+                    self.torrent_info['pub_date'] = -1
+                self.parseDate = False
                 self.foundStats = False
 
     def request(self, searchTerm, category, page=1):
@@ -143,12 +148,9 @@ class solidtorrents(object):
     def search(self, what, cat='all'):
         category = self.supported_categories[cat]
 
-        parser = self.TorrentInfoParser(self.url)
-        parser.feed(self.request(what, category, 1))
-
-        totalPages = min(math.ceil(parser.totalResults / 20), 5)
-
-        for page in range(2, totalPages + 1):
+        for page in range(1, 5):
+            parser = self.TorrentInfoParser(self.url)
             parser.feed(self.request(what, category, page))
-
-        parser.close()
+            parser.close()
+            if parser.totalResults < 15:
+                break
